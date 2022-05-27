@@ -69,11 +69,6 @@ for (i in 1:nmods){
         max(vars::roots(VAR_est[[p]]))))
 }
 
-# We have at least on root that is close to a unit root, so we might
-# consider imposing rank restrictions using the VECM representation. The
-# package urca provides functions for working with VECMs, and in particular,
-# the function ca.jo, which implements Johansen's trace and maximum eigenvalue
-# tests. We will focus on the trace test in this exercise.
 nmods <- length(adq_idx_var)
 for (i in 1:nmods){
   p <- adq_idx_var[i]
@@ -81,40 +76,14 @@ for (i in 1:nmods){
   print(summary(ca.jo(x, type = "trace", K = p)))
 }
 
-# Let us denote by VECM(p, r) a specification corresponding to a VAR(p), but
-# with rank A(1) = r imposed. Recall that in the VECM form of a VAR(p), there
-# are actually only p - 1 lags in the differenced series.
-
-# For each VAR(p), p = 3, 4, 5, we obtain nearly identical
-# inference regarding r. Namely, we can sequentially test:
-#
 # (test 1) H0: r = 0 vs H1: r >= 1 --> reject H0 at 1%
 # (test 2) H0: r = 1 vs H1: r >= 2 --> reject H0 at 1%
 # (test 3) H0: r = 2 vs H1: r >= 3 --> fail to reject H0 at 5%
 
-# if we H0 in test1, then we conclude that r is between 1 and 4;
-# hence, it is not a contradiction to follow this test 2, in which both H0
-# and H1 are in the same set r = {1, 2, 3, 4} we ended up with after test 1;
-# note that this is not as clear when the max eigenvalue test is used...
-
-# importantly: when we fail to reject H0 r = 2 against H1: r >= 3 in test 3,
-# this NOT evidence that r = 2 -- there is no justification to accept H0;
-# the only reasonable conclusion is that VECM with r = 2 is NOT empirically
-# distinguishable from VECMs with r = 3 or r = 4.
-
-# However, since we cannot reject specifications with r < 4, this suggests
-# that it may be reasonable to consider VECMs with r = 2 and r = 3 as
-# alternative specifications to each VAR(p). In our notation this is VECM(p, 4)
-# (which again is equivalent to the VECM with r = 4 and p - 1 differenced lags)
 
 # 3.
 #
-# There is not a huge computational cost to consider a general class of VECM
-# models with p = 3,...,6 and r = 0,...,4, so this is what we'll do. The
-# information obtained in Q1/Q2 -- starting with a class of unrestricted VARs,
-# then using Johansen's trace test to obtain inference on r -- can be useful to
-# either reduce the overall number of VECMs we search over or to refine the
-# adequate set of VECMs we end up constructing using the general search.
+
 
 VECM_est <- list()
 ic_vecm <- matrix(nrow = 4 * (1 + n),  ncol = 4)
@@ -172,16 +141,12 @@ for (i in 1:nmods){
 # in Q1. This is to be expected -- VECM and VAR representations for the same p
 # theoretically have the same residuals, so autocorrelation analysis should not
 # be very different.
-# We proceed with this as the adequate set, but cautious of the lower
-# p-values produced for the residuals of VECM(4, r) models.
 
 # 4.
 #
 # We will use p = 3, but the same exercise can be carried out with p = 4.
 # The urca package provides an estimation routine for VECMs called cajorls().
-# However, it does not provide standard errors for the estimated coefficients in
-# the equilibrium relationships. This is unfortunately a recurring issue in
-# software packages!
+
 
 p <- 3
 for (r in 2:4){
