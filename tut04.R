@@ -104,7 +104,7 @@ mydata <- read.delim("wealth.csv", header = TRUE,  sep = ",")
 ardl_est <- ardl(CT ~ AT + YT, mydata, order = c(1, 2, 2))
 
 # see results
-ardl_est
+summary(ardl_est)
 
 # compute and plot the cumulative IRFs
 irfs_lrm <- ardl_irfs(ardl_est)
@@ -130,15 +130,13 @@ print(irfs_lrm$lrm)
 # equilbrium relation (gamma = 0, mu unrestricted in our notation)
 
 ecm_sr <- recm(ardl_est, case = 2)
-ecm_sr
+summary(ecm_sr)
 # note that the "recm" function does not return LRMs, but only the aggregate
 # error correction term (which it calls "ect"); to get the details of this
 # ect term, we need to separately use the "multipliers" function
 ecm_lrm <- multipliers(ardl_est)
 ecm_lrm
 
-print(summary(ecm_sr))
-print(ecm_lrm)
 
 # (c)
 #
