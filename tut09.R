@@ -1,314 +1,206 @@
-library(forecast)
-library(dplyr)
-library(rugarch)
+library(zoo)
+library(vars)
+library(pracma)
 
-# load the data in Merck.csv
-mydata <- read.delim("Merck.csv", header = TRUE,  sep = ",")
+# load the data in money_dem.csv
+mydata <- read.delim("money_dem.csv", header = TRUE,  sep = ",")
 
-date <- as.Date(mydata$Date, format = "%d/%m/%Y")
-y <- mydata$y
-r <- diff(log(y))
+date <- as.yearqtr(mydata$DATE)
+lrgdp <- log(mydata$RGDP)
+price <- mydata$GDP/mydata$RGDP
+lrm2 <- log(mydata$M2) - log(price)
+rs <- mydata$TB3mo
+x <- cbind(lrgdp, lrm2, rs)
 
-# plot the returns
-plot(date[-1], r, type = "l", xlab = "", ylab = "returns")
+# plot the three generated samples
+plot(date, lrgdp, type = "l", xlab = "", ylab = "Real GDP")
+plot(date, lrm2, type = "l", xlab = "", ylab = "GDP Deflator")
+plot(date, rs, type = "l", xlab = "", ylab = "Short-Term Interest Rate")
 
 # 1
 #
 # (a)
 #
-# same approach as with basic GARCH but now add also the threshold option;
-# note: what we call "TGARCH", the "rugarch" package calls "gjrGARCH" and it
-# calls "TGARCH" a different variant -- this is common, so we must always check
-# the documentation to be sure!
-submods <- c("sGARCH", "gjrGARCH")
-ARMA_TGARCH_est <- list()
-ic_arma_tgarch <- matrix( nrow = 4 ^ 2 * 2 ^ 3,
-                          ncol = 7 )
-colnames(ic_arma_tgarch) <- c("pm", "qm", "ph", "qh",
-                              "thresh", "aic", "bic")
-i <- 0; t0 <- proc.time()
-for (pm in 0:3)
+# We will consider VARs with p= 1,...,20.
+# Note: the VAR command does not allow estimating a VAR(0),
+# so we will not worry about this specification.
+VAR_est <- list()
+ic_var <- matrix(nrow = 20,  ncol = 3)
+colnames(ic_var) <- c("p", "aic", "bic")
+for (p in 1:20)
 {
-  for (qm in 0:3)
-  {
-    for (ph in 0:1)
-    {
-      for (qh in 0:1)
-      {
-        for (thresh in 0:1)
-        {
-          i <- i + 1
-          ic_arma_tgarch[i, 1:5] <- c(pm, qm, ph, qh, thresh)
-          
-          if (ph == 0 && qh == 0)
-          {
-            if (!thresh) # no such thing as a homoscedastic threshold ARMA
-            {
-              # for models with constant variance, the ugarchspec and
-              # ugarchfit functions do not work well; instead, the
-              # documentation advises to use arfimaspec and arfimafit
-              try(silent = T, expr =
-              {
-                ARMA_TGARCH_mod <- arfimaspec(
-                  mean.model = list(armaOrder = c(pm, qm)))
-                
-                ARMA_TGARCH_est[[i]] <- arfimafit(ARMA_TGARCH_mod, r)
-                
-                ic_arma_tgarch[i,6:7] <- infocriteria(
-                  ARMA_TGARCH_est[[i]])[1:2]
-              })
-            }
-          }
-          else
-          {
-            try(silent = T, expr =
-            {
-              ARMA_TGARCH_mod <- ugarchspec(
-                mean.model = list(armaOrder = c(pm, qm)),
-                variance.model = list(model = submods[1 + thresh],
-                                      garchOrder = c(ph, qh)))
-              
-              ARMA_TGARCH_est[[i]] <- ugarchfit(ARMA_TGARCH_mod, r,
-                                                solver = 'hybrid')
-              
-              ic_arma_tgarch[i,6:7] <- infocriteria(ARMA_TGARCH_est[[i]])[1:2]
-            })
-          }
-          cat("\r", "Processed ARMA(",
-              pm, ",", qm, ")-",
-              c("", "T")[1 + thresh], "GARCH(",
-              ph, ",", qh, ")",
-              c(" ", "")[1 + thresh], sep = "")
-          
-        }
-      }
-    }
-  }
+  VAR_est[[p]] <- VAR(x, p)
+  ic_var[p,] <- c(p, AIC(VAR_est[[p]]),
+                     BIC(VAR_est[[p]]))
 }
-cat("\n", proc.time() - t0, "\n")
 
-ic_aic_arma_tgarch <- ic_arma_tgarch[order(ic_arma_tgarch[,6]),][1:20,]
-ic_bic_arma_tgarch <- ic_arma_tgarch[order(ic_arma_tgarch[,7]),][1:20,]
+ic_aic_var <- ic_var[order(ic_var[,2]),]
+ic_bic_var <- ic_var[order(ic_var[,3]),]
 
-ic_aic_arma_tgarch
-ic_bic_arma_tgarch
+ic_aic_var
+ic_bic_var
+# AIC and BIC clearly agree on p = 2, 3, 4 as the top 3;
+# the rest are quite a bit inferior, so we will go with these.
+adq_set_var <- as.matrix(ic_var[2:4,])
+adq_idx_var <- c(2:4)
 
-# find the intersection of AIC and BIC preferred sets
-ic_int_arma_tgarch <- intersect(as.data.frame(ic_aic_arma_tgarch),
-                                as.data.frame(ic_bic_arma_tgarch))
-
-ic_int_arma_tgarch
-
-# We select the entire intersection set.
-adq_set_arma_tgarch <- as.matrix(arrange(as.data.frame(
-                                  ic_int_arma_tgarch), pm, qm, ph, qh, thresh))
-adq_idx_arma_tgarch <- match(data.frame(t(adq_set_arma_tgarch[, 1:5])),
-                                  data.frame(t(ic_arma_tgarch[, 1:5])))
-
-# Check the residuals
-nmods <- length(adq_idx_arma_tgarch)
-sacf_tgarch <- matrix(nrow = nmods, ncol = 15)
-colnames(sacf_tgarch) <- c("pm", "qm", "ph", "qh", "thresh", 1:10)
+# Check the residuals: the vars package provides a few
+# different tests through the serial.test function;
+# we will use the LM test by setting type = "BG", but
+# other tests are just as valid.
+nmods <- length(adq_idx_var)
 for (i in 1:nmods)
 {
-  sacf_tgarch[i,1:5] <- adq_set_arma_tgarch[i,1:5]
-  sacf_tgarch[i,6:15] <-
-                  acf(ARMA_TGARCH_est[[adq_idx_arma_tgarch[i]]]@fit$z,
-                                       lag = 10, plot = F)$acf[2:11]
+  p <- adq_idx_var[i]
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_est[[p]], type = "BG"))
 }
 
-sacf_tgarch
+# Autocorrelations appear to be quite high for all three models.
+# This is a concern, so we proceed by checking all 20 VAR
+# specifications.
+for (p in 1:20)
+{
+  print(paste0("Checking VAR(", p, ")"))
+  print(serial.test(VAR_est[[p]], type = "BG"))
+}
 
-# Autocorrelations appear to be relatively small for all models.
+# White noise residuals is rejected for p <= 7, which indicates
+# that we need to consider higher lag orders.
+# For p >= 8, both AIC and BIC clearly agree that lower is better.
+# We will proceed with p = 8, 9, 10 as the adequate set.
+adq_set_var <- as.matrix(ic_var[8:10,])
+adq_idx_var <- c(8:10)
 
 # (b)
 #
-# plotting estimated volatilities is the same as for basic GARCH (we still
-# don't get confidence intervals)
-title_tgarch <- rep(NA, times = nmods)
+# intercept and slope coefficients
+nmods <- length(adq_idx_var)
 for (i in 1:nmods)
 {
-  title_tgarch[i] <- paste("ARMA(",
-                     as.character(adq_set_arma_tgarch[i, 1]), ",",
-                     as.character(adq_set_arma_tgarch[i, 2]),
-                     ")-",
-                     c("", "T")[1 + adq_set_arma_tgarch[i,5]],
-                     "GARCH(",
-                     as.character(adq_set_arma_tgarch[i, 3]), ",",
-                     as.character(adq_set_arma_tgarch[i, 4]), ")",
-                     sep = "")
-  plot(date[-1], sqrt(
-        ARMA_TGARCH_est[[adq_idx_arma_tgarch[i]]]@fit$var),
-        type = "l", xlab = "", ylab = "volatilities",
-        ylim = c(0, 0.08), main = title_tgarch[i])
+  p <- adq_idx_var[i]
+  print(paste0("VAR(", p, ") has ",
+               3 * (1 + 3 * p),
+               " coefficients."))
 }
-
-# All volatility estimates generally look very similar.
-# TGARCH vs GARCH does not make a noticeable difference
-# for fixed pm, qm, ph and qh. However, larger pm and qm
-# appear to be associated with larger "spikes" in volatilities
-# when they do occur.
 
 # (c)
 #
-# To test for leverage effects, we focus on on the threshold coefficient
-# in models where the threshold is actually included. Note that rugarch calls
-# the threshold parameter gamma, whereas we call it lambda.
+# The vars package provides a handy function "roots" to
+# ascertain the stability of the estimated VARs.
+# Unfortunately, it does not provide confidence intervals
+# for the estimated roots.
+# Also, be careful not to use the function "stability" for
+# this purpose -- that function searches for potential
+# structural breaks.
+nmods <- length(adq_idx_var)
 for (i in 1:nmods)
 {
-  if (adq_set_arma_tgarch[i, 5] == 1)
-  {
-    # this is a specification with a threshold
-    lambda_est <- ARMA_TGARCH_est[[
-              adq_idx_arma_tgarch[i]]]@fit$coef["gamma1"]
-    lambda_tvl <- ARMA_TGARCH_est[[
-              adq_idx_arma_tgarch[i]]]@fit$tval["gamma1"]
-    cat(paste0(title_tgarch[i], ": lambda_hat = ",
-                                   round(lambda_est, 2),
-                                ", t-value = ",
-                                   round(lambda_tvl, 2)),
-                                "\n")
-  }
+  p <- adq_idx_var[i]
+  print(paste0("VAR(", p,
+        "): Maximum absolute eigenvalue is ",
+        max(vars::roots(VAR_est[[p]]))))
 }
-# the null of "no leverage effects" is easily rejected in favour of
-# "leverage effects" for all models except ARMA(2,1)-TGARCH(1,1), where
-# "reverse effects" are being confirmed at a very low significance level
+
+# We have at least on root that is approximately 1
+# in absolute value -- i.e., close to a unit root.
+# We should be aware that forecasts will be less reliable
+# at longer horizons. Do we want to consider imposing a
+# restriction of an exact unit root? We will explore this
+# in Tutorial 12!
 
 # (d)
 #
+# Use the predict function to generate forecasts; plot will
+# then automatically produce 95% predictive intervals
+# (forecast uncertainty only, not estimation uncertainty).
+hrz = 12
+VAR_fcst <- list()
+xlim <- c(length(date) - 3 * hrz,
+              length(date) + hrz)
+ylim <- c(lrgdp[xlim[1]],
+          max(lrgdp) + 0.2)
 for (i in 1:nmods)
 {
-  plot(ugarchboot(ARMA_TGARCH_est[[adq_idx_arma_tgarch[i]]],
-                  method = "Partial"), which = 3)
+  p <- adq_idx_var[i]
+  VAR_fcst[[i]] <- predict(VAR_est[[p]],
+                           n.ahead = hrz)
+  plot(VAR_fcst[[i]], names = "lrgdp",
+           xlim = xlim, ylim = ylim,
+           main = "Forecast for Log Real GDP",
+           xlab = "Horizon",
+           ylab = "RRP")
 }
 
-# There are subtle differences between the volatility forecasts generated by
-# different specifications, but all agree that volatilities across the forecast
-# horizon will remain well below the levels estimated around 2005 and then again
-# in 2008/2009
+# Forecasts for the three VAR specifications look
+# qualitatively similar. Also, to note is that the near
+# unit root estimated for each VAR does not seem to be
+# of any consequence in terms of forecasts up to 12
+# quarters ahead -- they are still quite accurate
+# (although these confidence intervals DO NOT take
+# into account estimate uncertainty!)
 
 # 2
 #
 # (a)
 #
-# same approach as with GARCH/TGARCH models; here it is somewhat simpler
-# because we fix all GARCH lags to be 1.
-ARMA_GARCHM_est <- list()
-ic_arma_garchm <- matrix( nrow = 4 ^ 2 * 2, ncol = 5 )
-colnames(ic_arma_garchm) <- c("p", "q", "m", "aic", "bic")
-i <- 0; t0 <- proc.time()
-for (p in 0:3)
+# We fix p = 8 for this question.
+orders <- perms(1:3)
+vnames <- c("lrgdp", "lrm2", "rs")
+for (i in 1:3)
 {
-  for (q in 0:3)
+  for (j in 1:3)
   {
-    for (m in 0:1)
+    for (k in 1:nrow(orders))
     {
-      i <- i + 1
-      ic_arma_garchm[i, 1:3] <- c(p, q, m)
+      title_i_j_k <- paste0("Response of ",
+                            vnames[i],
+                            " to a shock in ",
+                            vnames[j],
+                            "; x = (",
+                            paste0(vnames[orders[k,]],
+                                  collapse = ", "),
+                            ")'")
+
+      irf_i_j_k <- irf(VAR(x[,orders[k,]], 8),
+                          n.ahead = 40,
+                          response = vnames[i],
+                          impulse = vnames[j],
+                          boot = TRUE)
         
-      try(silent = T, expr =
-      {
-        ARMA_GARCHM_mod <- ugarchspec(
-                            mean.model = list(armaOrder = c(p, q),
-                                              archm = m),
-                            variance.model = list(garchOrder = c(1, 1)))
-                    
-        ARMA_GARCHM_est[[i]] <- ugarchfit(ARMA_GARCHM_mod, r,
-                                          solver = 'hybrid')
-                  
-        ic_arma_garchm[i,4:5] <- infocriteria(ARMA_GARCHM_est[[i]])[1:2]
-      })
-      cat("\r", "Processed ARMA(",p, ",", q, ")",
-              c("-GARCH(1,1) ", "-GARCHM(1,1)")[1 + m], sep = "")
-          
+      plot(irf_i_j_k, main = title_i_j_k)
+      cat("\r", title_i_j_k, "  ", sep = "")
     }
   }
 }
-cat("\n", proc.time() - t0, "\n")
-
-ic_aic_arma_garchm <- ic_arma_garchm[order(ic_arma_garchm[,4]),][1:20,]
-ic_bic_arma_garchm <- ic_arma_garchm[order(ic_arma_garchm[,5]),][1:20,]
-
-ic_aic_arma_garchm
-ic_bic_arma_garchm
-
-# find the intersection of AIC and BIC preferred sets
-ic_int_arma_garchm <- intersect(as.data.frame(ic_aic_arma_garchm),
-                                as.data.frame(ic_bic_arma_garchm))
-
-# We select the entire intersection set.
-adq_set_arma_garchm <- as.matrix(arrange(as.data.frame(
-                                ic_int_arma_garchm), p, q, m))
-adq_idx_arma_garchm <- match(data.frame(t(adq_set_arma_garchm[, 1:3])),
-                                  data.frame(t(ic_arma_garchm[, 1:3])))
-
-# Check the residuals
-nmods <- length(adq_idx_arma_garchm)
-sacf_garchm <- matrix(nrow = nmods, ncol = 13)
-colnames(sacf_garchm) <- c("p", "q", "m", 1:10)
-for (i in 1:nmods)
-{
-  sacf_garchm[i,1:3] <- adq_set_arma_garchm[i,1:3]
-  sacf_garchm[i,4:13] <-
-                  acf(ARMA_GARCHM_est[[adq_idx_arma_garchm[i]]]@fit$z,
-                                       lag = 10, plot = F)$acf[2:11]
-}
-
-sacf_garchm
-
-# Autocorrelations appear to be relatively small for all models.
+ 
+# See "solutions" doc for a possible interpretation.
 
 # (b)
 #
-title_garchm <- rep(NA, times = nmods)
-for (i in 1:nmods)
-{
-  title_garchm[i] <- paste("ARMA(",
-        as.character(adq_set_arma_garchm[i, 1]), ",",
-        as.character(adq_set_arma_garchm[i, 2]),
-        c(")-GARCH(1,1)", ")-GARCHM(1,1)")[1 + adq_set_arma_garchm[i,3]],
-        sep = "")
-  plot(date[-1], sqrt(
-        ARMA_GARCHM_est[[adq_idx_arma_garchm[i]]]@fit$var),
-        type = "l", xlab = "", ylab = "volatilities",
-        ylim = c(0, 0.08), main = title_garchm[i])
-}
+# For this part we also fix the order to be (lgdp, lrm2, rs).
+# The fevd function only computes decompositions at the
+# estimated values and does not provide confidence intvls.
+FEVD_est <- fevd(VAR_est[[8]], n.ahead = 40)
+plot(FEVD_est, mar = c(2,1,2,1),
+               oma = c(0,1,0,1))
 
-# All volatility estimates generally look very similar.
-# GARCHM vs GARCH appears to exhibit only a minor difference
-# for fixed p, q. The periods of high volatility match up to those estimated
-# using TGARCH models.
+# See solutions doc for a possible interpretation.
 
 # (c)
 #
-# To test for time-varying risk premia, we focus on on the "archm" coefficient
-# in models where the GARCH-in-mean is actually included (this is "delta" in
-# Engle, et al., 1987).
-for (i in 1:nmods)
+# The function causality in the vars package is very handy
+# to implement Granger causality tests
+for (i in 1:3)
 {
-  if (adq_set_arma_garchm[i, 3] == 1)
-  {
-    # this is a specification with GARCH-in-mean
-    archm_est <- ARMA_GARCHM_est[[
-                          adq_idx_arma_garchm[i]]]@fit$coef["archm"]
-    archm_tvl <- ARMA_GARCHM_est[[
-                          adq_idx_arma_garchm[i]]]@fit$tval["archm"]
-    cat(paste0(title_garchm[i], ": archm_hat = ",
-                                   round(archm_est, 2),
-                                ", t-value = ",
-                                   round(archm_tvl, 2)),
-                                "\n")
-  }
-}
-# the null of "time-invariant risk premium" is easily rejected in favour of
-# "time-varying risk premium" for all models.
-
-# (d)
-#
-for (i in 1:nmods)
-{
-  plot(ugarchboot(ARMA_GARCHM_est[[adq_idx_arma_garchm[i]]],
-                                   method = "Partial"), which = 3)
+  ctest_i <- causality(VAR_est[[8]],
+                       cause = vnames[i])
+  print(ctest_i$Granger)
 }
 
-# volatility forecasts are very similar to those obtained with the TGARCH.
+# We confirm that GDP Granger-causes either real money supply
+# or interest rates (or both) at the 1% significance level.
+# Likewise, interest rates are confirmed to Granger-cause either
+# GDP or money supply (or both) at very small significance level.
+# However, we DO NOT have sufficient evidence to confirm that money supply
+# DOES NOT Granger-cause GDP and interest rates.
