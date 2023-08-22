@@ -112,3 +112,5 @@ reg IQ nearc4 smsa66 reg662 reg663 reg664 reg665 reg666 reg667 reg668 reg669 , r
 
 reg educ exper expersq nearc4 smsa66 reg662 reg663 reg664 reg665 reg666 reg667 reg668 reg669,r
 test nearc4
+
+ivregress 2sls lwage exper expersq smsa66 reg662 reg663 reg664 reg665 reg666 reg667 reg668 reg669 (educ = nearc4), first r
