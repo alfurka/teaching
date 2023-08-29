@@ -68,7 +68,6 @@ test wave2 wave3
 
 ivregress 2sls ltotqty (lavgprc= wave2 wave3), r
 
-
 * II-(5)
 
 *>>>> Discuss
