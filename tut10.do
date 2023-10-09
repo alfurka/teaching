@@ -95,6 +95,10 @@ psmatch2 treated2, pscore(ps) outcome(re78) neighbor(1) caliper(0.025) common
 * I-(11) NN
 psmatch2 treated2, pscore(ps) outcome(re78) 
 
+* similar one with calipher
+
+psmatch2 treated2, pscore(ps) outcome(re78) neighbor(1) caliper(0.04)
+
 * I-(12) Radius (=all neighbours within the caliper)
 psmatch2 treated2, radius pscore(ps) outcome(re78) neighbor(1) caliper(0.025)
 
